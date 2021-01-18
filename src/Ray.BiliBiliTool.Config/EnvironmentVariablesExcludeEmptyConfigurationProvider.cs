@@ -2,6 +2,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Configuration.EnvironmentVariables;
 
 namespace Ray.BiliBiliTool.Config
@@ -12,32 +13,62 @@ namespace Ray.BiliBiliTool.Config
     /// </summary>
     public class EnvironmentVariablesExcludeEmptyConfigurationProvider : EnvironmentVariablesConfigurationProvider
     {
-        private readonly string prefix;
-        private readonly Func<KeyValuePair<string, string>, bool> startsWith;
-        private readonly Func<KeyValuePair<string, string>, bool> removeNullValue;
-        private readonly Func<KeyValuePair<string, string>, bool> fifter;
-        private readonly Func<KeyValuePair<string, string>, KeyValuePair<string, string>> removePrefix;
+        private readonly string _prefix;
+        private readonly Func<KeyValuePair<string, string>, bool> _startsWith;
+        private readonly Func<KeyValuePair<string, string>, bool> _removeNullValue;
+        private readonly Func<KeyValuePair<string, string>, bool> _fifter;
 
         public EnvironmentVariablesExcludeEmptyConfigurationProvider(string prefix = null) : base(prefix)
         {
-            this.prefix = prefix ?? string.Empty;
-            this.startsWith = c => c.Key.StartsWith(this.prefix, StringComparison.OrdinalIgnoreCase);
-            this.removeNullValue = c => !string.IsNullOrWhiteSpace(c.Value);
-            this.fifter = c => this.startsWith(c) && this.removeNullValue(c);
+            _prefix = prefix ?? string.Empty;
 
-            this.removePrefix = this.prefix.Length == 0
-                ? t => t
-                : t => t.NewKey(c => c.Substring(this.prefix.Length));
+            _startsWith = c => c.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+            _removeNullValue = c => !string.IsNullOrWhiteSpace(c.Value);
+            _fifter = c => _startsWith(c) && _removeNullValue(c);
         }
 
         public override void Load()
         {
             Dictionary<string, string> dictionary = Environment.GetEnvironmentVariables()
                 .ToDictionary(otherAction: t => t
-                     .Where(this.fifter)
-                     .Select(this.removePrefix));
+                     .Where(_fifter)
+                     .Select(x => x.NewKey(key => NormalizeKey(key))));
 
             base.Data = new Dictionary<string, string>(dictionary, StringComparer.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// 格式化Key
+        /// </summary>
+        /// <param name="key"></param>
+        /// <returns></returns>
+        private string NormalizeKey(string key)
+        {
+            key = RemoveKeyPrefix(key);
+            key = ReplaceKeyDelimiter(key);
+            return key;
+        }
+
+        /// <summary>
+        /// 移除指定前缀
+        /// </summary>
+        /// <param name="key"></param>
+        /// <returns></returns>
+        private string RemoveKeyPrefix(string key)
+        {
+            return _prefix.IsNullOrEmpty()
+                ? key
+                : key.Substring(_prefix.Length);
+        }
+
+        /// <summary>
+        /// 替换分隔符
+        /// </summary>
+        /// <param name="key"></param>
+        /// <returns></returns>
+        private string ReplaceKeyDelimiter(string key)
+        {
+            return key.Replace("__", ConfigurationPath.KeyDelimiter);
         }
     }
 }

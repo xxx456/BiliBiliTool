@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Ray.BiliBiliTool.Agent.BiliBiliAgent.Dtos;
@@ -14,59 +15,70 @@ namespace Ray.BiliBiliTool.Application
         private readonly ILogger<DailyTaskAppService> _logger;
         private readonly IAccountDomainService _loginDomainService;
         private readonly IVideoDomainService _videoDomainService;
+        private readonly IDonateCoinDomainService _donateCoinDomainService;
         private readonly IMangaDomainService _mangaDomainService;
         private readonly ILiveDomainService _liveDomainService;
         private readonly IVipPrivilegeDomainService _vipPrivilegeDomainService;
         private readonly IChargeDomainService _chargeDomainService;
+        private readonly ICoinDomainService _coinDomainService;
         private readonly SecurityOptions _securityOptions;
 
         public DailyTaskAppService(
             ILogger<DailyTaskAppService> logger,
             IAccountDomainService loginDomainService,
             IVideoDomainService videoDomainService,
+            IDonateCoinDomainService donateCoinDomainService,
             IMangaDomainService mangaDomainService,
             ILiveDomainService liveDomainService,
             IVipPrivilegeDomainService vipPrivilegeDomainService,
             IChargeDomainService chargeDomainService,
-            IOptionsMonitor<SecurityOptions> securityOptions)
+            IOptionsMonitor<SecurityOptions> securityOptions,
+            ICoinDomainService coinDomainService
+            )
         {
-            this._logger = logger;
-            this._loginDomainService = loginDomainService;
-            this._videoDomainService = videoDomainService;
-            this._mangaDomainService = mangaDomainService;
-            this._liveDomainService = liveDomainService;
-            this._vipPrivilegeDomainService = vipPrivilegeDomainService;
-            this._chargeDomainService = chargeDomainService;
-            this._securityOptions = securityOptions.CurrentValue;
+            _logger = logger;
+            _loginDomainService = loginDomainService;
+            _videoDomainService = videoDomainService;
+            _donateCoinDomainService = donateCoinDomainService;
+            _mangaDomainService = mangaDomainService;
+            _liveDomainService = liveDomainService;
+            _vipPrivilegeDomainService = vipPrivilegeDomainService;
+            _chargeDomainService = chargeDomainService;
+            _coinDomainService = coinDomainService;
+            _securityOptions = securityOptions.CurrentValue;
         }
 
         public void DoDailyTask()
         {
-            if (this._securityOptions.IsSkipDailyTask)
+            if (_securityOptions.IsSkipDailyTask)
             {
-                this._logger.LogWarning("已配置为跳过每日任务");
+                _logger.LogWarning("已配置为跳过每日任务\r\n");
                 return;
             }
 
-            this._logger.LogInformation("-----开始每日任务-----\r\n");
+            _logger.LogInformation("-----开始每日任务-----\r\n");
 
-            UseInfo userInfo;
-            DailyTaskInfo dailyTaskInfo;
+            if (_securityOptions.RandomSleepMaxMin > 0)
+            {
+                int randomMin = new Random().Next(1, ++_securityOptions.RandomSleepMaxMin);
+                _logger.LogInformation("随机休眠{min}分钟 \r\n", randomMin);
+                Thread.Sleep(randomMin * 1000 * 60);
+            }
 
-            userInfo = this.Login();
-            dailyTaskInfo = this.GetDailyTaskStatus();
+            UserInfo userInfo = Login();
+            DailyTaskInfo dailyTaskInfo = GetDailyTaskStatus();
 
-            this.WatchAndShareVideo(dailyTaskInfo);
-            this.AddCoinsForVideo();
-            this.MangaSign();
-            this.LiveSign();
-            userInfo.Money = this.ExchangeSilver2Coin();
+            WatchAndShareVideo(dailyTaskInfo);
+            AddCoinsForVideo();
+            MangaSign();
+            LiveSign();
+            ExchangeSilver2Coin();
 
-            this.ReceiveVipPrivilege(userInfo);
-            this.ReceiveMangaVipReward(userInfo);
-            this.Charge(userInfo);
+            ReceiveVipPrivilege(ref userInfo);
+            ReceiveMangaVipReward(userInfo);
+            Charge(userInfo);
 
-            this._logger.LogInformation("-----全部任务已执行结束-----\r\n");
+            _logger.LogInformation("-----全部任务已执行结束-----\r\n");
         }
 
         /// <summary>
@@ -74,10 +86,11 @@ namespace Ray.BiliBiliTool.Application
         /// </summary>
         /// <returns></returns>
         [TaskInterceptor("登录")]
-        private UseInfo Login()
+        private UserInfo Login()
         {
-            UseInfo userInfo = this._loginDomainService.LoginByCookie();
+            UserInfo userInfo = _loginDomainService.LoginByCookie();
             if (userInfo == null) throw new Exception("登录失败，请检查Cookie");//终止流程
+
             return userInfo;
         }
 
@@ -88,7 +101,7 @@ namespace Ray.BiliBiliTool.Application
         [TaskInterceptor(null, false)]
         private DailyTaskInfo GetDailyTaskStatus()
         {
-            return this._loginDomainService.GetDailyTaskStatus();
+            return _loginDomainService.GetDailyTaskStatus();
         }
 
         /// <summary>
@@ -97,7 +110,7 @@ namespace Ray.BiliBiliTool.Application
         [TaskInterceptor("观看、分享视频", false)]
         private void WatchAndShareVideo(DailyTaskInfo dailyTaskInfo)
         {
-            this._videoDomainService.WatchAndShareVideo(dailyTaskInfo);
+            _videoDomainService.WatchAndShareVideo(dailyTaskInfo);
         }
 
         /// <summary>
@@ -106,7 +119,7 @@ namespace Ray.BiliBiliTool.Application
         [TaskInterceptor("投币", false)]
         private void AddCoinsForVideo()
         {
-            this._videoDomainService.AddCoinsForVideo();
+            _donateCoinDomainService.AddCoinsForVideos();
         }
 
         /// <summary>
@@ -115,34 +128,52 @@ namespace Ray.BiliBiliTool.Application
         [TaskInterceptor("直播中心签到", false)]
         private void LiveSign()
         {
-            this._liveDomainService.LiveSign();
+            _liveDomainService.LiveSign();
         }
 
         /// <summary>
         /// 直播中心的银瓜子兑换硬币
         /// </summary>
         [TaskInterceptor("直播中心银瓜子兑换硬币", false)]
-        private decimal ExchangeSilver2Coin()
+        private void ExchangeSilver2Coin()
         {
-            return this._liveDomainService.ExchangeSilver2Coin();
+            var success = _liveDomainService.ExchangeSilver2Coin();
+            if (!success) return;
+
+            //如果兑换成功，则打印硬币余额
+            var coinBalance = _coinDomainService.GetCoinBalance();
+            _logger.LogInformation("当前硬币余额: {0}", coinBalance);
         }
 
         /// <summary>
         /// 每月领取大会员福利
         /// </summary>
         [TaskInterceptor("每月领取大会员福利", false)]
-        private void ReceiveVipPrivilege(UseInfo userInfo)
+        private void ReceiveVipPrivilege(ref UserInfo userInfo)
         {
-            this._vipPrivilegeDomainService.ReceiveVipPrivilege(userInfo);
+            var suc = _vipPrivilegeDomainService.ReceiveVipPrivilege(userInfo);
+
+            //如果领取成功，需要刷新账户信息（比如B币余额）
+            if (suc)
+            {
+                try
+                {
+                    userInfo = _loginDomainService.LoginByCookie();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError("领取福利成功，但之后刷新用户信息时异常，信息：{msg}", ex.Message);
+                }
+            }
         }
 
         /// <summary>
         /// 每月为自己充电
         /// </summary>
-        [TaskInterceptor("每月为自己充电", false)]
-        private void Charge(UseInfo userInfo)
+        [TaskInterceptor("每月使用快过期的B币充电", false)]
+        private void Charge(UserInfo userInfo)
         {
-            this._chargeDomainService.Charge(userInfo);
+            _chargeDomainService.Charge(userInfo);
         }
 
         /// <summary>
@@ -151,16 +182,16 @@ namespace Ray.BiliBiliTool.Application
         [TaskInterceptor("漫画签到", false)]
         private void MangaSign()
         {
-            this._mangaDomainService.MangaSign();
+            _mangaDomainService.MangaSign();
         }
 
         /// <summary>
         /// 每月获取大会员漫画权益
         /// </summary>
         [TaskInterceptor("每月领取大会员漫画权益", false)]
-        private void ReceiveMangaVipReward(UseInfo userInfo)
+        private void ReceiveMangaVipReward(UserInfo userInfo)
         {
-            this._mangaDomainService.ReceiveMangaVipReward(1, userInfo);
+            _mangaDomainService.ReceiveMangaVipReward(1, userInfo);
         }
     }
 }

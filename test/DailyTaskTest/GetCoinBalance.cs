@@ -12,9 +12,9 @@ namespace DailyTaskTest
         [Fact]
         public void Test1()
         {
-            Program.PreWorks(new string[] { });
+            Program.Init(new string[] { });
 
-            using (var scope = RayContainer.Root.CreateScope())
+            using (var scope = Global.ServiceProviderRoot.CreateScope())
             {
                 var dailyTaskAppService = scope.ServiceProvider.GetRequiredService<ICoinDomainService>();
 
